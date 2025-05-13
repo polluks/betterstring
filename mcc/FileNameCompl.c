@@ -2,7 +2,7 @@
 
  BetterString.mcc - A better String gadget MUI Custom Class
  Copyright (C) 1997-2000 Allan Odgaard
- Copyright (C) 2005-2019 BetterString.mcc Open Source Team
+ Copyright (C) 2005-2021 BetterString.mcc Open Source Team
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -233,7 +233,11 @@ BOOL FileNameComplete(Object *obj, BOOL backwards, struct InstData *data)
           while((dl = NextDosEntry(dl, LDF_READ|LDF_DEVICES|LDF_VOLUMES|LDF_ASSIGNS)) != NULL)
           {
             #ifdef __AROS__
-            strlcpy(tmpBuffer, dl->dol_Ext.dol_AROS.dol_DevName, sizeof tmpBuffer);
+              #ifdef AROS_ABI_V1
+              strlcpy(tmpBuffer, AROS_BSTR_ADDR(dl->dol_Name), AROS_BSTR_strlen(dl->dol_Name));
+              #else
+              strlcpy(tmpBuffer, dl->dol_Ext.dol_AROS.dol_DevName, sizeof tmpBuffer);
+              #endif
             #else
             // dol_Name is a BSTR, we have to convert it to a regular C string
             char *bstr = BADDR(dl->dol_Name);

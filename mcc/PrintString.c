@@ -2,7 +2,7 @@
 
  BetterString.mcc - A better String gadget MUI Custom Class
  Copyright (C) 1997-2000 Allan Odgaard
- Copyright (C) 2005-2019 BetterString.mcc Open Source Team
+ Copyright (C) 2005-2021 BetterString.mcc Open Source Team
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -34,6 +34,27 @@
 #if defined(__amigaos3__)
 #include <cybergraphx/cybergraphics.h>
 #include <proto/cybergraphics.h>
+
+#ifndef RPTAG_PenMode
+#define RPTAG_PenMode         0x80000080
+#endif
+#ifndef RPTAG_FgColor
+#define RPTAG_FgColor         0x80000081
+#endif
+#ifndef RPTAG_BgColor
+#define RPTAG_BgColor         0x80000082
+#endif
+#endif
+
+#if defined(__amigaos4__)
+#define COLOR_TAGS(color)     RPTAG_APenColor, (color)
+#define PEN_TAGS(pen)         RPTAG_APen, (pen)
+#elif defined(__amigaos3__) || defined(__AROS__)
+#define COLOR_TAGS(color)     RPTAG_PenMode, FALSE, RPTAG_FgColor, (color)
+#define PEN_TAGS(pen)         RPTAG_PenMode, TRUE,  RPTAG_APen, (pen)
+#elif defined(__MORPHOS__)
+#define COLOR_TAGS(color)     RPTAG_AlphaMode, TRUE,  RPTAG_PenMode, FALSE, RPTAG_FgColor, (color)
+#define PEN_TAGS(pen)         RPTAG_AlphaMode, FALSE, RPTAG_PenMode, TRUE,  RPTAG_APen, (pen)
 #endif
 
 #include "private.h"
@@ -47,6 +68,87 @@
 #define YOFF  0
 
 #if defined(__amigaos3__)
+static LONG do_alpha(LONG a, LONG v)
+{
+  LONG tmp  = (a*v);
+  return ((tmp<<8) + tmp + 32768)>>16;
+}
+
+// custom implementation WritePixelArrayAlpha() based on ReadPixelArray() and WritePixelArray()
+// WritePixelArrayAlpha() requires cybergraphics.library V45+
+static ULONG _WritePixelArrayAlpha(APTR src, ULONG srcx, ULONG srcy, ULONG srcmod, struct RastPort *rp, ULONG destx, ULONG desty, ULONG width, ULONG height, ULONG globalalpha)
+{
+  if(LIB_VERSION_IS_AT_LEAST(CyberGfxBase, 45, 0) == TRUE)
+  {
+    return WritePixelArrayAlpha(src, srcx, srcy, srcmod, rp, destx, desty, width, height, globalalpha);
+  }
+  else
+  {
+    ULONG pixels = 0;
+
+    if(width > 0 && height > 0)
+    {
+      ULONG *buf;
+
+      if((buf = AllocVec(width * height * 4, MEMF_ANY)) != NULL)
+      {
+        ULONG x, y;
+        ULONG *spix;
+        ULONG *dpix = buf;
+
+        ReadPixelArray(buf, 0, 0, width * 4, rp, destx, desty, width, height, RECTFMT_ARGB);
+
+        // Incorrect but cant bother with alpha channel math for now
+        globalalpha = 255 - (globalalpha >> 24);
+
+        for(y = 0; y < height; y++)
+        {
+          spix = (ULONG *)((char *)src + (srcy + y) * srcmod + srcx * 4);
+
+          for(x = 0; x < width; x++)
+          {
+            ULONG srcpix, r, g, b;
+            LONG a;
+
+            srcpix = *spix++;
+
+            a = (srcpix >> 24) & 0xff;
+            r = (srcpix >> 16) & 0xff;
+            g = (srcpix >> 8) & 0xff;
+            b = (srcpix >> 0) & 0xff;
+
+            a = a - globalalpha;
+
+            if(a > 0)
+            {
+              ULONG dstpix, dest_r, dest_g, dest_b;
+
+              dstpix = *dpix;
+
+              dest_r = (dstpix >> 16) & 0xff;
+              dest_g = (dstpix >> 8) & 0xff;
+              dest_b = (dstpix >> 0) & 0xff;
+
+              dest_r += do_alpha(a, r - dest_r);
+              dest_g += do_alpha(a, g - dest_g);
+              dest_b += do_alpha(a, b - dest_b);
+
+              *dpix = 0xff000000 | dest_r << 16 | dest_g << 8 | dest_b;
+            }
+
+            dpix++;
+          }
+        }
+        WritePixelArray(buf, 0, 0, width * 4, rp, destx, desty, width, height, RECTFMT_ARGB);
+        FreeVec(buf);
+        pixels = width * height;
+      }
+    }
+
+    return pixels;
+  }
+}
+
 static void reconstructAlpha(ULONG *pix, ULONG width, ULONG height, ULONG text, ULONG back)
 {
   LONG tr = (text >> 16) & 0xff;
@@ -78,29 +180,25 @@ static void reconstructAlpha(ULONG *pix, ULONG width, ULONG height, ULONG text, 
       LONG r = (p >> 16) & 0xff;
       LONG g = (p >>  8) & 0xff;
       LONG b = (p >>  0) & 0xff;
-      LONG p_r = ((r - br) * 0xff) / tmb_r;
-      LONG p_g = ((g - bg) * 0xff) / tmb_g;
-      LONG p_b = ((b - bb) * 0xff) / tmb_b;
+      LONG p_r = (tmb_r != 0) ? ((r - br) * 0xff) / tmb_r : 0;
+      LONG p_g = (tmb_g != 0) ? ((g - bg) * 0xff) / tmb_g : 0;
+      LONG p_b = (tmb_b != 0) ? ((b - bb) * 0xff) / tmb_b : 0;
 
-      p |= (((p_r + p_g + p_b) / 3) << 24);
+      p |= ((ULONG)((p_r + p_g + p_b) / 3) << 24);
     }
 
     *pix++ = p;
   }
 }
 
-static void AlphaText(struct RastPort *rp, const char *txt, LONG len, ULONG fgcolor, ULONG alpha)
+static void AlphaText(struct InstData *data, struct MUI_RenderInfo *mri, const char *txt, LONG len, ULONG fgcolor, ULONG alpha)
 {
+  struct RastPort *rp = &data->rport;
   struct TextExtent te;
   struct BitMap *bm;
-  LONG w;
-  LONG h;
 
   TextExtent(rp, txt, len, &te);
-  // use a one pixel border around the text to ensure we have at least one background colored pixel
-  w = te.te_Width+2;
-  h = te.te_Height+2;
-  if((bm = AllocBitMap(w, h, 32, BMF_CLEAR|BMF_MINPLANES|BMF_DISPLAYABLE, rp->BitMap)) != NULL)
+  if((bm = AllocBitMap(te.te_Width, te.te_Height, 32, BMF_CLEAR|BMF_MINPLANES|BMF_DISPLAYABLE, rp->BitMap)) != NULL)
   {
     struct RastPort _rp;
     ULONG *pix;
@@ -109,14 +207,19 @@ static void AlphaText(struct RastPort *rp, const char *txt, LONG len, ULONG fgco
     _rp.BitMap = bm;
     _rp.Layer = NULL;
 
-    Move(&_rp, 1, _rp.TxBaseline+1);
+	// prepare a completely white background
+    FillPixelArray(&_rp, 0, 0, te.te_Width, te.te_Height, 0xffffffff);
+    // draw the text with the desired color
+    SetRGB32(&mri->mri_Screen->ViewPort, data->exclusivePen, ARGB32_TO_RED(fgcolor) << 24, ARGB32_TO_GREEN(fgcolor) << 24, ARGB32_TO_BLUE(fgcolor) << 24);
+    SetRPAttrs(&_rp, PEN_TAGS(data->exclusivePen), TAG_DONE);
+    Move(&_rp, 0, _rp.TxBaseline);
     Text(&_rp, txt, len);
 
-    if((pix = AllocVec(w * h * sizeof(ULONG), MEMF_ANY)) != NULL)
+    if((pix = AllocVec(te.te_Width * te.te_Height * sizeof(ULONG), MEMF_ANY)) != NULL)
     {
-      ReadPixelArray(pix, 0, 0, w*4, &_rp, 0, 0, w, h, RECTFMT_ARGB);
-      reconstructAlpha(pix, w, h, fgcolor, pix[0] & 0x00ffffff);
-      WritePixelArrayAlpha(pix, 1, 1, w*4, rp, rp->cp_x, rp->cp_y - rp->TxBaseline, te.te_Width, te.te_Height, alpha);
+      ReadPixelArray(pix, 0, 0, te.te_Width*4, &_rp, 0, 0, te.te_Width, te.te_Height, RECTFMT_ARGB);
+      reconstructAlpha(pix, te.te_Width, te.te_Height, fgcolor & 0x00ffffff, 0x00ffffff);
+      _WritePixelArrayAlpha(pix, 0, 0, te.te_Width*4, rp, rp->cp_x, rp->cp_y - rp->TxBaseline, te.te_Width, te.te_Height, alpha);
 
       FreeVec(pix);
     }
@@ -294,22 +397,11 @@ VOID PrintString(struct IClass *cl, Object *obj)
 
         GetRGB32(_screen(obj)->ViewPort.ColorMap, MUIPEN(textcolor), 1, rgb3);
         color = 0x80000000 | ((rgb3[0] >> 24) & 0xff) << 16 | ((rgb3[1] >> 24) & 0xff) << 8 | ((rgb3[2] >> 24) & 0xff) << 0;
-
-        SetRPAttrs(rport,
-          #if defined(__MORPHOS__)
-          RPTAG_PenMode,   FALSE,
-          RPTAG_AlphaMode, FALSE,
-          #endif
-          #if defined(__amigaos4__)
-          RPTAG_APenColor, color,
-          #else
-          RPTAG_FgColor,   color,
-          #endif
-          TAG_DONE);
+        SetRPAttrs(rport, COLOR_TAGS(color), TAG_DONE);
 
         #if defined(__amigaos3__)
-        if(CyberGfxBase != NULL)
-          AlphaText(rport, text, length, color, 0x80000000);
+        if(CyberGfxBase != NULL && data->exclusivePen != -1)
+          AlphaText(data, muiRenderInfo(obj), text, length, color, 0x80000000);
         else
           Text(rport, text, length);
         #else
@@ -320,13 +412,13 @@ VOID PrintString(struct IClass *cl, Object *obj)
       {
         // switch to italic style if the system or the screen does not support alpha blended text
         SetSoftStyle(rport, FSF_ITALIC, AskSoftStyle(rport));
-        SetAPen(rport, MUIPEN(_pens(obj)[MPEN_SHADOW]));
+        SetRPAttrs(rport, PEN_TAGS(MUIPEN(_pens(obj)[MPEN_SHADOW])), TAG_DONE);
         Text(rport, text, length);
       }
     }
     else
     {
-      SetAPen(rport, MUIPEN(textcolor));
+      SetRPAttrs(rport, PEN_TAGS(MUIPEN(textcolor)), TAG_DONE);
       Text(rport, text, length);
     }
 
@@ -356,7 +448,7 @@ VOID PrintString(struct IClass *cl, Object *obj)
     struct RastPort *rport = muiRenderInfo(obj)->mri_RastPort;
 
     SetAfPt(rport, GhostPattern, 1);
-    SetAPen(rport, _pens(obj)[MPEN_SHADOW]);
+    SetRPAttrs(rport, PEN_TAGS(MUIPEN(_pens(obj)[MPEN_SHADOW])), TAG_DONE);
     RectFill(rport, _left(obj), _top(obj), _right(obj), _bottom(obj));
     SetAfPt(rport, 0, 0);
   }

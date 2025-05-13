@@ -2,7 +2,7 @@
 
  BetterString.mcc - A better String gadget MUI Custom Class
  Copyright (C) 1997-2000 Allan Odgaard
- Copyright (C) 2005-2019 BetterString.mcc Open Source Team
+ Copyright (C) 2005-2021 BetterString.mcc Open Source Team
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -39,6 +39,10 @@
 #include "private.h"
 
 #include "Debug.h"
+
+#ifndef NP_ProgramDir
+#define NP_ProgramDir NP_HomeDir
+#endif
 
 static struct Library *IFFParseBase = NULL;
 #if defined(__amigaos4__)
@@ -449,15 +453,18 @@ BOOL StartClipboardServer(void)
                                       #elif defined(__MORPHOS__)
                                       NP_CodeType, CODETYPE_PPC,
                                       #endif
+                                      NP_CurrentDir, Lock("T:", SHARED_LOCK),
+                                      NP_ProgramDir, Lock("T:", SHARED_LOCK),
                                       TAG_DONE);
 
     if(serverProcess !=  NULL)
     {
       // we use one global reply port with a static signal bit
+      memset( &replyPort, 0, sizeof( replyPort ) );
       replyPort.mp_Node.ln_Type = NT_MSGPORT;
-      NewList(&replyPort.mp_MsgList);
       replyPort.mp_SigBit = SIGB_SINGLE;
       replyPort.mp_SigTask = FindTask(NULL);
+      NewList(&replyPort.mp_MsgList);
 
       msg.mn_ReplyPort = &replyPort;
       msg.mn_Node.ln_Name = (STRPTR)NULL;

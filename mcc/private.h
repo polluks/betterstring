@@ -2,7 +2,7 @@
 
  BetterString.mcc - A better String gadget MUI Custom Class
  Copyright (C) 1997-2000 Allan Odgaard
- Copyright (C) 2005-2019 BetterString.mcc Open Source Team
+ Copyright (C) 2005-2021 BetterString.mcc Open Source Team
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -110,6 +110,10 @@ struct InstData
   BOOL mui39;
   BOOL mui4x;
   STRPTR OwnBackground;
+
+  #if defined(__amigaos3__)
+  LONG exclusivePen;
+  #endif
 };
 
 #define FLG_Secret                 (1L << 0)
@@ -349,18 +353,9 @@ struct  MUIP_WhichPointerType   { ULONG MethodID; LONG mx; LONG my; };
 #define MUIV_PointerType_Text   30
 #endif
 
-#if defined(__amigaos3__)
-#ifndef RPTAG_PenMode
-#define RPTAG_PenMode         0x80000080
-#endif
-
-#ifndef RPTAG_FgColor
-#define RPTAG_FgColor         0x80000081
-#endif
-
-#ifndef RPTAG_BgColor
-#define RPTAG_BgColor         0x80000082
-#endif
-#endif // __amigaos3__
+#define ARGB32_TO_ALPHA(a) (((a) >> 24) & 0xff)
+#define ARGB32_TO_RED(a)   (((a) >> 16) & 0xff)
+#define ARGB32_TO_GREEN(a) (((a) >>  8) & 0xff)
+#define ARGB32_TO_BLUE(a)  (((a)      ) & 0xff)
 
 #endif /* BETTERSTRING_MCC_PRIV_H */

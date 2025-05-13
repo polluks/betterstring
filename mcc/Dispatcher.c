@@ -2,7 +2,7 @@
 
  BetterString.mcc - A better String gadget MUI Custom Class
  Copyright (C) 1997-2000 Allan Odgaard
- Copyright (C) 2005-2019 BetterString.mcc Open Source Team
+ Copyright (C) 2005-2021 BetterString.mcc Open Source Team
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -37,13 +37,13 @@ Object * VARARGS68K DoSuperNew(struct IClass *cl, Object *obj, ...)
 {
   Object *rc;
   VA_LIST args;
+  struct opSet msg;
 
   VA_START(args, obj);
-  #if defined(__AROS__)
-  rc = (Object *)DoSuperNewTagList(cl, obj, NULL, (struct TagItem *)VA_ARG(args, IPTR));
-  #else
-  rc = (Object *)DoSuperMethod(cl, obj, OM_NEW, VA_ARG(args, ULONG), NULL);
-  #endif
+  msg.MethodID = OM_NEW;
+  msg.ops_AttrList = VA_ARG(args, struct TagItem *);
+  msg.ops_GInfo = NULL;
+  rc = (Object *)DoSuperMethodA(cl, obj, (Msg)&msg);
   VA_END(args);
 
   return rc;
@@ -69,6 +69,10 @@ static IPTR mNew(struct IClass *cl, Object *obj, struct opSet *msg)
       data->mui39 = LIB_VERSION_IS_AT_LEAST(MUIMasterBase, 20, 0);
       // everything beyond muimaster 20.5500 is considered to be MUI4
       data->mui4x = LIB_VERSION_IS_AT_LEAST(MUIMasterBase, 20, 5500);
+
+      #if defined(__amigaos3__)
+      data->exclusivePen = -1;
+      #endif
 
       data->locale = OpenLocale(NULL);
 
@@ -306,6 +310,14 @@ static IPTR mSetup(struct IClass *cl, Object *obj, struct MUI_RenderInfo *rinfo)
 
     DoMethod(_win(obj), MUIM_Window_AddEventHandler, &data->ehnode);
 
+    #if defined(__amigaos3__)
+    // AmigaOS3 needs an exclusive pen on truecolor screens for truecolor text
+    if(isFlagSet(data->Flags, FLG_Truecolor))
+    {
+      data->exclusivePen = ObtainPen(_screen(obj)->ViewPort.ColorMap, -1, 0, 0, 0, PENF_EXCLUSIVE|PENF_NO_SETCOLOR);
+    }
+    #endif
+
     AddWindowSleepNotify(cl, obj);
 
     rc = TRUE;
@@ -333,6 +345,14 @@ static IPTR mCleanup(struct IClass *cl, Object *obj, Msg msg)
   DoMethod(_win(obj), MUIM_Window_RemEventHandler, &data->ehnode);
 
   FreeConfig(muiRenderInfo(obj), data);
+
+  #if defined(__amigaos3__)
+  if(data->exclusivePen != -1)
+  {
+    ReleasePen(_screen(obj)->ViewPort.ColorMap, data->exclusivePen);
+    data->exclusivePen = -1;
+  }
+  #endif
 
   // forget that we went through MUIM_Setup
   clearFlag(data->Flags, FLG_Setup);
